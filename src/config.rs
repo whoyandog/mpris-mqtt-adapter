@@ -16,7 +16,7 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub discovery: bool,
 
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, default_value_t = 1)]
     pub poll_seconds: u64,
 
     #[arg(long, default_value_t = 15)]

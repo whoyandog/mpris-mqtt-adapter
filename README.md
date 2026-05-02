@@ -34,11 +34,13 @@ cargo build --release
   --port 1883 \
   --topic workstation/media \
   --player "playerctld,%any" \
-  --poll-seconds 2 \
+  --poll-seconds 1 \
   --capabilities-ttl-seconds 15 \
   --probe-diagnostics \
   --discovery
 ```
+
+После успешной обработки команды из `.../cmd` адаптер сразу читает состояние через `playerctl` и немедленно публикует `.../state`, не дожидаясь следующего poll-тика.
 
 Переменные окружения (опционально):
 

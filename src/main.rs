@@ -150,6 +150,14 @@ async fn main() -> Result<()> {
                                     sanitize(&err.to_string())
                                 );
                                 let _ = client.publish(event_topic.clone(), QoS::AtLeastOnce, false, msg).await;
+                            } else if let Ok(state) = read_state(&cli.player) {
+                                let payload = serde_json::to_vec(&state)?;
+                                client
+                                    .publish(state_topic.clone(), QoS::AtLeastOnce, true, payload)
+                                    .await?;
+
+                                last_active_player = Some(state.player.clone());
+                                last_state = Some(state);
                             }
                         }
                     }
