@@ -19,6 +19,12 @@ pub struct Cli {
     #[arg(long, default_value_t = 2)]
     pub poll_seconds: u64,
 
+    #[arg(long, default_value_t = 15)]
+    pub capabilities_ttl_seconds: u64,
+
+    #[arg(long, default_value_t = false)]
+    pub probe_diagnostics: bool,
+
     #[arg(long, default_value = "playerctld,%any")]
     pub player: String,
 }

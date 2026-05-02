@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -13,7 +13,7 @@ mod util;
 use commands::handle_command;
 use config::Cli;
 use discovery::publish_discovery;
-use playerctl::{detect_capabilities, read_state};
+use playerctl::{detect_capabilities_with_probe, read_state};
 use types::{Capabilities, PlayerState};
 use util::sanitize;
 
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
         .await
         .context("failed to subscribe to command topic")?;
 
-    let capabilities = detect_capabilities(&cli.player).unwrap_or_else(|_| Capabilities::unavailable());
+    let (capabilities, probe_report) = detect_capabilities_with_probe(&cli.player);
     client
         .publish(
             capabilities_topic.clone(),
@@ -72,6 +72,18 @@ async fn main() -> Result<()> {
         .await
         .context("failed to publish capabilities")?;
 
+    if cli.probe_diagnostics {
+        client
+            .publish(
+                event_topic.clone(),
+                QoS::AtLeastOnce,
+                false,
+                serde_json::to_vec(&probe_report)?,
+            )
+            .await
+            .context("failed to publish initial probe diagnostics")?;
+    }
+
     if cli.discovery {
         publish_discovery(&client, &cli.topic, &state_topic, &cmd_topic).await?;
     }
@@ -79,23 +91,52 @@ async fn main() -> Result<()> {
     let mut ticker = tokio::time::interval(Duration::from_secs(cli.poll_seconds));
     let mut last_state: Option<PlayerState> = None;
     let mut last_capabilities: Option<Capabilities> = Some(capabilities);
+    let mut last_probe_payload: Option<Vec<u8>> = if cli.probe_diagnostics {
+        Some(serde_json::to_vec(&probe_report)?)
+    } else {
+        None
+    };
+    let mut last_active_player: Option<String> = probe_report.resolved_player.clone();
+    let capabilities_ttl = Duration::from_secs(cli.capabilities_ttl_seconds.max(1));
+    let mut last_capabilities_refresh = Instant::now();
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let capabilities = detect_capabilities(&cli.player).unwrap_or_else(|_| Capabilities::unavailable());
-                if last_capabilities.as_ref() != Some(&capabilities) {
-                    let payload = serde_json::to_vec(&capabilities)?;
-                    client.publish(capabilities_topic.clone(), QoS::AtLeastOnce, true, payload).await?;
-                    last_capabilities = Some(capabilities);
-                }
+                let mut player_changed = false;
 
                 if let Ok(state) = read_state(&cli.player) {
+                    if last_active_player.as_ref() != Some(&state.player) {
+                        last_active_player = Some(state.player.clone());
+                        player_changed = true;
+                    }
+
                     if last_state.as_ref() != Some(&state) {
                         let payload = serde_json::to_vec(&state)?;
                         client.publish(state_topic.clone(), QoS::AtLeastOnce, true, payload).await?;
                         last_state = Some(state);
                     }
+                }
+
+                let ttl_expired = last_capabilities_refresh.elapsed() >= capabilities_ttl;
+                if ttl_expired || player_changed || last_capabilities.is_none() {
+                    let (capabilities, probe_report) = detect_capabilities_with_probe(&cli.player);
+
+                    if last_capabilities.as_ref() != Some(&capabilities) {
+                        let payload = serde_json::to_vec(&capabilities)?;
+                        client.publish(capabilities_topic.clone(), QoS::AtLeastOnce, true, payload).await?;
+                        last_capabilities = Some(capabilities);
+                    }
+
+                    if cli.probe_diagnostics {
+                        let payload = serde_json::to_vec(&probe_report)?;
+                        if last_probe_payload.as_ref() != Some(&payload) {
+                            client.publish(event_topic.clone(), QoS::AtLeastOnce, false, payload.clone()).await?;
+                            last_probe_payload = Some(payload);
+                        }
+                    }
+
+                    last_capabilities_refresh = Instant::now();
                 }
             }
             event = eventloop.poll() => {

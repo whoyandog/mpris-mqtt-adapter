@@ -45,6 +45,42 @@ impl Capabilities {
     }
 }
 
+#[derive(Debug, Serialize, PartialEq, Clone)]
+pub struct CapabilityProbeCheck {
+    pub capability: String,
+    pub passed: bool,
+    pub source: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Clone)]
+pub struct CapabilityProbeReport {
+    pub status: String,
+    pub player_selector: String,
+    pub resolved_player: Option<String>,
+    pub fallback: bool,
+    pub checks: Vec<CapabilityProbeCheck>,
+    pub capabilities: Capabilities,
+}
+
+impl CapabilityProbeReport {
+    pub fn unavailable(player_selector: &str, reason: &str) -> Self {
+        Self {
+            status: "capabilities-probe".to_string(),
+            player_selector: player_selector.to_string(),
+            resolved_player: None,
+            fallback: true,
+            checks: vec![CapabilityProbeCheck {
+                capability: "can_control".to_string(),
+                passed: false,
+                source: "status".to_string(),
+                reason: reason.to_string(),
+            }],
+            capabilities: Capabilities::unavailable(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CmdMsg {
     pub action: String,

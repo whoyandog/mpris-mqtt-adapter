@@ -35,6 +35,8 @@ cargo build --release
   --topic workstation/media \
   --player "playerctld,%any" \
   --poll-seconds 2 \
+  --capabilities-ttl-seconds 15 \
+  --probe-diagnostics \
   --discovery
 ```
 
@@ -52,6 +54,96 @@ cargo build --release
 - `workstation/media/availability` (retained): `online` / `offline`
 - `workstation/media/event`: ошибки и сервисные события
 - `workstation/media/cmd`: входящие JSON-команды
+
+## Runtime Detection Capabilities
+
+Возможности плеера определяются в рантайме на основе:
+
+- MPRIS metadata (`canPlay`, `canPause`, `canGoNext`, `canGoPrevious`, `canSeek`, `canStop`);
+- безопасных probe-запросов (`playerctl volume`, `shuffle`, `loop`, шаблоны metadata);
+- fallback-логики без destructive side-effects.
+
+Для `can_stop` используется безопасная эвристика: если `canStop` недоступен, значение выводится из `can_play`/`can_pause` и текущего `status`, без отправки команды `stop` как теста.
+
+## Capabilities Cache TTL
+
+Чтобы не дергать `playerctl` на каждом тике, `capabilities` кэшируются:
+
+- пересчет по TTL (`--capabilities-ttl-seconds`, по умолчанию `15`);
+- пересчет при смене активного плеера;
+- публикация в `.../capabilities` только при фактическом изменении payload.
+
+Это снижает шум и нагрузку на D-Bus/MPRIS.
+
+## Probe Diagnostics
+
+При флаге `--probe-diagnostics` адаптер публикует диагностический отчет в `.../event`:
+
+- какие проверки выполнены;
+- какой источник использован (`metadata`, `query`, `probe`, `fallback`);
+- почему конкретная capability получилась `true` или `false`.
+
+Сообщения отправляются только при изменении диагностического payload, чтобы не создавать лишний шум.
+
+Пример event (успешный probe):
+
+```json
+{
+  "status": "capabilities-probe",
+  "player_selector": "playerctld,%any",
+  "resolved_player": "spotify",
+  "fallback": false,
+  "checks": [
+    {
+      "capability": "can_seek",
+      "passed": true,
+      "source": "metadata",
+      "reason": "{{mpris:canSeek}}=true"
+    }
+  ],
+  "capabilities": {
+    "can_play": true,
+    "can_pause": true,
+    "can_stop": true,
+    "can_next": true,
+    "can_previous": true,
+    "can_seek": true,
+    "can_set_volume": true,
+    "can_shuffle": true,
+    "can_loop": true
+  }
+}
+```
+
+Пример event (плеер недоступен):
+
+```json
+{
+  "status": "capabilities-probe",
+  "player_selector": "playerctld,%any",
+  "resolved_player": null,
+  "fallback": true,
+  "checks": [
+    {
+      "capability": "can_control",
+      "passed": false,
+      "source": "status",
+      "reason": "status query failed: playerctl [\"status\"] failed: No players found"
+    }
+  ],
+  "capabilities": {
+    "can_play": false,
+    "can_pause": false,
+    "can_stop": false,
+    "can_next": false,
+    "can_previous": false,
+    "can_seek": false,
+    "can_set_volume": false,
+    "can_shuffle": false,
+    "can_loop": false
+  }
+}
+```
 
 ## Формат state
 
